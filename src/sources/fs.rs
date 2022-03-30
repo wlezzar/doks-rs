@@ -72,45 +72,6 @@ impl<'a> FileSystemDocumentSourceStream<'a> {
             }
         };
 
-        // let stream =
-        //     WalkDir::new(
-        //         paths
-        //             .first()
-        //             .expect("Only one sized arrays are supported for the moment"))
-        //         .filter_map(async move |file| match file {
-        //             Ok(file) => {
-        //                 let path = file.path().to_string_lossy().to_string();
-        //                 let content = match tokio::fs::read_to_string(file.path()).await {
-        //                     Ok(content) => content,
-        //                     Err(err) => return Some(Err(anyhow!("Couldn't read file content for '{}': {}", path, err))),
-        //                 };
-        //
-        //                 let matching = include
-        //                     .into_iter()
-        //                     .all(|r| r.is_match(path.as_ref()));
-        //                 let matching = matching && exclude
-        //                     .into_iter()
-        //                     .all(|r| !r.is_match(path.as_ref()));
-        //
-        //                 if !matching {
-        //                     return None;
-        //                 }
-        //
-        //                 Some(
-        //                     Ok(
-        //                         Document {
-        //                             id: path.clone(),
-        //                             title: file.file_name().to_string_lossy().to_string(),
-        //                             link: path,
-        //                             content,
-        //                             metadata: HashMap::default(),
-        //                         }
-        //                     )
-        //                 )
-        //             }
-        //             Err(err) => Some(Err(anyhow!("Couldn't read file: {}", err)))
-        //         });
-
         FileSystemDocumentSourceStream { stream: Box::pin(stream) }
     }
 }

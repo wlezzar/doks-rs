@@ -1,56 +1,39 @@
 use std::collections::HashMap;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 use async_stream::try_stream;
 use async_walkdir::WalkDir;
 use regex::Regex;
-use tokio_stream::Stream;
 
 use crate::model::Document;
+use crate::sources::DocStream;
 
 use super::DocumentSource;
 
 pub struct FileSystemDocumentSource {
-    source_id: String,
-    paths: Vec<String>,
-    include: Vec<Regex>,
-    exclude: Vec<Regex>,
+    pub source_id: String,
+    pub paths: Vec<String>,
+    pub include: Vec<Regex>,
+    pub exclude: Vec<Regex>,
 }
 
-impl<'a> DocumentSource<FileSystemDocumentSourceStream<'a>> for &'a FileSystemDocumentSource {
-    fn fetch(self) -> FileSystemDocumentSourceStream<'a> {
-        FileSystemDocumentSourceStream::new(
-            &self.source_id,
-            self.paths.as_slice(),
-            self.include.as_slice(),
-            self.exclude.as_slice(),
-        )
-    }
-}
+impl DocumentSource for FileSystemDocumentSource {
+    fn fetch(&self) -> DocStream {
+        let paths = self.paths.clone();
+        let source_id = self.source_id.clone();
+        let include = self.include.clone();
+        let exclude = self.exclude.clone();
 
-struct FileSystemDocumentSourceStream<'a> {
-    stream: Pin<Box<dyn Stream<Item=anyhow::Result<Document>> + 'a>>,
-}
-
-impl<'a> FileSystemDocumentSourceStream<'a> {
-    fn new(
-        source_id: &'a str,
-        paths: &'a [String],
-        include: &'a [Regex],
-        exclude: &'a [Regex],
-    ) -> FileSystemDocumentSourceStream<'a> {
         let stream = try_stream! {
             for path in paths {
                 for await file in WalkDir::new(path) {
                     let file = file?;
                     let path = file.path().to_string_lossy().to_string();
 
-                    let matching = include
+                    let matching = (&include)
                         .into_iter()
                         .all(|r| r.is_match(path.as_ref()));
 
-                    let matching = matching && exclude
+                    let matching = matching && (&exclude)
                         .into_iter()
                         .all(|r| !r.is_match(path.as_ref()));
 
@@ -72,15 +55,7 @@ impl<'a> FileSystemDocumentSourceStream<'a> {
             }
         };
 
-        FileSystemDocumentSourceStream { stream: Box::pin(stream) }
-    }
-}
-
-impl<'a> Stream for FileSystemDocumentSourceStream<'a> {
-    type Item = anyhow::Result<Document>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.as_mut().poll_next(cx)
+        Box::pin(stream)
     }
 }
 

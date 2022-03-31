@@ -1,39 +1,13 @@
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use tokio_stream::Stream;
-
 use crate::model::Document;
-use crate::sources::DocumentSource;
+use crate::sources::{DocStream, DocumentSource};
 
 pub struct StaticDocumentSource {
     documents: Vec<Document>,
 }
 
-impl<'a> DocumentSource<StaticDocumentSourceStream<'a>> for &'a StaticDocumentSource {
-    fn fetch(self) -> StaticDocumentSourceStream<'a> {
-        StaticDocumentSourceStream {
-            documents: self.documents.as_slice(),
-            current_position: 0,
-        }
-    }
-}
-
-struct StaticDocumentSourceStream<'a> {
-    documents: &'a [Document],
-    current_position: usize,
-}
-
-impl<'a> Stream for StaticDocumentSourceStream<'a> {
-    type Item = anyhow::Result<Document>;
-
-    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        return if self.current_position >= self.documents.len() {
-            Poll::Ready(None)
-        } else {
-            self.current_position = self.current_position + 1;
-            Poll::Ready(Some(anyhow::Ok(self.documents[self.current_position - 1].clone())))
-        };
+impl DocumentSource for StaticDocumentSource {
+    fn fetch(&self) -> DocStream {
+        Box::pin(tokio_stream::iter(self.documents.clone().into_iter().map(|e| Ok(e))))
     }
 }
 

@@ -1,0 +1,25 @@
+{
+  "sources": [
+    {
+      "id": "github",
+      "source": "github",
+      "repositories": {
+        "from": "list",
+        "list": [
+          {
+            "name": "wlezzar/jtab"
+          },
+          {
+            "name": "wlezzar/doks"
+          },
+          {
+            "name": "adevinta/zoe"
+          }
+        ]
+      }
+    }
+  ],
+  "engine": {
+    "use": "tantivy"
+  }
+}

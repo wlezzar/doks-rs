@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub id: String,
     pub source: String,

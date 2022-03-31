@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
@@ -9,12 +8,13 @@ use tantivy::{doc, Index, IndexReader, IndexWriter};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
-use tantivy::schema::{Field, SchemaBuilder, STORED, STRING, TEXT};
+use tantivy::schema::{Document as TantivyDoc, Field, SchemaBuilder, STORED, STRING, TEXT};
 
 use crate::model::Document;
 use crate::search::SearchEngine;
+use crate::sources::DocStream;
 
-struct TantivySearchEngine {
+pub struct TantivySearchEngine {
     index: Index,
     writer: Arc<RwLock<IndexWriter>>,
     reader: IndexReader,
@@ -36,7 +36,7 @@ struct SchemaFields {
 }
 
 impl TantivySearchEngine {
-    fn new<T: AsRef<Path>>(path: T) -> anyhow::Result<Self> {
+    pub fn new<T: AsRef<Path>>(path: T) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
         match path.parent() {
@@ -69,14 +69,15 @@ impl TantivySearchEngine {
 }
 
 #[async_trait]
-impl SearchEngine<Pin<Box<dyn tokio_stream::Stream<Item=Document>>>> for TantivySearchEngine {
-    async fn index<I: IntoIterator<Item=Document> + Send + 'static>(&self, documents: I) -> anyhow::Result<()> {
+impl SearchEngine for TantivySearchEngine {
+    async fn index(&self, documents: Vec<Document>) -> anyhow::Result<()> {
         let writer = self.writer.clone();
         let fields = self.fields.clone();
 
         let task = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            let documents = documents.into_iter();
             for document in documents {
+                log::info!("Indexing document: {} (source: {})", document.link, document.source);
+
                 writer.read().unwrap().add_document(doc!(
                     fields.title => document.title,
                     fields.id => document.id,
@@ -85,7 +86,7 @@ impl SearchEngine<Pin<Box<dyn tokio_stream::Stream<Item=Document>>>> for Tantivy
                     fields.source => document.source,
                 ));
             }
-
+            
             writer.write().unwrap().commit()?;
 
             Ok(())
@@ -94,48 +95,71 @@ impl SearchEngine<Pin<Box<dyn tokio_stream::Stream<Item=Document>>>> for Tantivy
         task.await?
     }
 
-    fn search(&self, query: String) -> anyhow::Result<Pin<Box<dyn tokio_stream::Stream<Item=Document>>>> {
+    fn search(&self, query: &str) -> anyhow::Result<DocStream> {
         let searcher = self.reader.searcher();
         let query_parser = QueryParser::for_index(
             &self.index,
             self.options.default_fields.clone(),
         );
-        let query = query_parser.parse_query(query.as_str())?;
-        let top_docs = searcher.search(query.borrow(), &TopDocs::with_limit(10))?;
+        let query = query_parser.parse_query(query)?;
+        let (results_tx, results_rx) = tokio::sync::mpsc::channel(64);
+        let fields = self.fields.clone();
 
-        let mut results = Vec::new();
+        // TODO: Is it possible that this leaks?
+        // When `rx` is dropped, `send_blocking` should fail making this task stop?
+        tokio::task::spawn_blocking(|| -> anyhow::Result<()> {
+            // Reassignments to move the values
+            let results_tx = results_tx;
+            let searcher = searcher;
+            let fields = fields;
+            let query = query;
 
-        for (_, doc_address) in top_docs {
-            let doc = searcher.doc(doc_address)?;
-            let converted = Document {
-                title: doc.get_first(self.fields.title)
-                    .and_then(|f| f.text())
-                    .expect("Field title of type text not found")
-                    .to_string(),
-                id: doc.get_first(self.fields.id)
-                    .and_then(|f| f.text())
-                    .expect("Field id of type text not found")
-                    .to_string(),
-                link: doc.get_first(self.fields.link)
-                    .and_then(|f| f.text())
-                    .expect("Field link of type text not found")
-                    .to_string(),
-                content: doc.get_first(self.fields.content)
-                    .and_then(|f| f.text())
-                    .expect("Field content of type text not found")
-                    .to_string(),
-                source: doc.get_first(self.fields.source)
-                    .and_then(|f| f.text())
-                    .expect("Field source of type text not found")
-                    .to_string(),
-                metadata: HashMap::new(),
-            };
+            let top_docs = searcher.search(
+                query.borrow(),
+                &TopDocs::with_limit(10),
+            )?;
 
-            results.push(converted);
-        }
+            for (_, doc_address) in top_docs {
+                let doc = searcher.doc(doc_address)?;
+                let doc = tantivy_doc_to_doks(doc, &fields)?;
 
-        Ok(Box::pin(tokio_stream::iter(results)))
+                results_tx.blocking_send(Ok(doc))?;
+            }
+
+            Ok(())
+        });
+
+
+        Ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(results_rx)))
     }
+}
+
+fn tantivy_doc_to_doks(tantivy_doc: TantivyDoc, fields: &SchemaFields) -> anyhow::Result<Document> {
+    Ok(
+        Document {
+            title: tantivy_doc.get_first(fields.title)
+                .and_then(|f| f.text())
+                .expect("Field title of type text not found")
+                .to_string(),
+            id: tantivy_doc.get_first(fields.id)
+                .and_then(|f| f.text())
+                .expect("Field id of type text not found")
+                .to_string(),
+            link: tantivy_doc.get_first(fields.link)
+                .and_then(|f| f.text())
+                .expect("Field link of type text not found")
+                .to_string(),
+            content: tantivy_doc.get_first(fields.content)
+                .and_then(|f| f.text())
+                .expect("Field content of type text not found")
+                .to_string(),
+            source: tantivy_doc.get_first(fields.source)
+                .and_then(|f| f.text())
+                .expect("Field source of type text not found")
+                .to_string(),
+            metadata: HashMap::new(),
+        }
+    )
 }
 
 #[cfg(test)]
@@ -177,7 +201,7 @@ mod tests {
 
         engine.reader.reload()?;
 
-        let results = engine.search("computer".to_string())?.collect::<Vec<_>>().await;
+        let results = engine.search("computer")?.collect::<Result<Vec<_>, _>>().await?;
 
         assert_eq!(results, vec![document2]);
 

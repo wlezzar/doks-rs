@@ -1,0 +1,14 @@
+{
+  "sources": [
+    {
+      "id": "local",
+      "source": "fs",
+      "paths": [
+        "/home/wlezzar/projects/personal/doks-rs/examples/data/files"
+      ]
+    }
+  ],
+  "engine": {
+    "use": "tantivy"
+  }
+}

@@ -1,13 +1,13 @@
 use anyhow;
 use async_trait::async_trait;
-use tokio_stream::Stream;
 
 use crate::model::Document;
+use crate::sources::DocStream;
 
 #[async_trait]
-trait SearchEngine<T: Stream<Item=Document>> {
-    async fn index<I: IntoIterator<Item=Document> + Send + 'static>(&self, documents: I) -> anyhow::Result<()>;
-    fn search(&self, query: String) -> anyhow::Result<T>;
+pub trait SearchEngine {
+    async fn index(&self, documents: Vec<Document>) -> anyhow::Result<()>;
+    fn search(&self, query: &str) -> anyhow::Result<DocStream>;
 }
 
-mod tantivy_impl;
+pub mod tantivy_impl;

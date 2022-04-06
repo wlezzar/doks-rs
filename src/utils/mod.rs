@@ -1,3 +1,6 @@
+pub mod json;
+pub mod streams;
+
 use std::mem;
 
 use futures::pin_mut;

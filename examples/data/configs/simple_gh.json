@@ -3,8 +3,13 @@
     {
       "id": "github",
       "source": "github",
+      "include": [
+        ".*.txt",
+        ".*.md"
+      ],
       "repositories": {
         "from": "list",
+        "transport": "Https",
         "list": [
           {
             "name": "wlezzar/jtab"
@@ -20,6 +25,7 @@
     }
   ],
   "engine": {
-    "use": "tantivy"
+    "use": "tantivy",
+    "path": "/tmp/doks_index"
   }
 }

@@ -39,9 +39,8 @@ impl TantivySearchEngine {
     pub fn new<T: AsRef<Path>>(path: T) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
-        match path.parent() {
-            Some(parent) if !parent.exists() => std::fs::create_dir_all(path)?,
-            _ => {}
+        if !path.exists() {
+            std::fs::create_dir_all(path)?;
         }
 
         let mut schema_builder = SchemaBuilder::new();
@@ -86,7 +85,7 @@ impl SearchEngine for TantivySearchEngine {
                     fields.source => document.source,
                 ));
             }
-            
+
             writer.write().unwrap().commit()?;
 
             Ok(())

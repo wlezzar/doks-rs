@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use async_stream::try_stream;
 use async_walkdir::WalkDir;
 use regex::Regex;
+use tokio_stream::StreamExt;
 
 use crate::model::Document;
 use crate::sources::DocStream;
+use crate::utils::streams::channel_stream;
 
 use super::DocumentSource;
 
@@ -23,11 +24,19 @@ impl DocumentSource for FileSystemDocumentSource {
         let include = self.include.clone();
         let exclude = self.exclude.clone();
 
-        let stream = try_stream! {
+        let stream = channel_stream(|tx| async move {
             for path in paths {
-                for await file in WalkDir::new(path) {
+                let mut files = WalkDir::new(path);
+
+                while let Some(file) = files.next().await {
                     let file = file?;
                     let path = file.path().to_string_lossy().to_string();
+
+                    if file.metadata().await?.is_dir() {
+                        continue;
+                    }
+
+                    log::debug!("Processing: {}", &path);
 
                     let matching = (&include)
                         .into_iter()
@@ -38,22 +47,25 @@ impl DocumentSource for FileSystemDocumentSource {
                         .all(|r| !r.is_match(path.as_ref()));
 
                     if !matching {
+                        log::debug!("Ignoring file: {}", &path);
                         continue;
                     }
 
                     let content = tokio::fs::read_to_string(file.path()).await?;
 
-                    yield Document {
+                    tx.send(Ok(Document {
                         id: path.clone(),
                         source: source_id.to_string(),
                         title: file.file_name().to_string_lossy().to_string(),
                         link: path,
                         content,
                         metadata: HashMap::default(),
-                    }
+                    })).await?;
                 }
             }
-        };
+
+            Ok(())
+        });
 
         Box::pin(stream)
     }

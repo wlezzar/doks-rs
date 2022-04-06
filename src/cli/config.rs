@@ -1,6 +1,7 @@
 use std::convert::TryInto;
 use std::path::PathBuf;
 
+use anyhow::bail;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,7 @@ use crate::search::SearchEngine;
 use crate::search::tantivy_impl::TantivySearchEngine;
 use crate::sources::DocumentSource;
 use crate::sources::fs::FileSystemDocumentSource;
+use crate::sources::gh::{GithubRepoStaticList, GithubSource, GitRepositoryLister, RepositoryInfo};
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct DoksConfig {
@@ -24,12 +26,9 @@ pub enum SourceConfig {
         id: String,
         repositories: GithubRepositoriesConfig,
         #[serde(default)]
-        transport: GitCloneTransport,
-        #[serde(default)]
         include: Vec<String>,
         #[serde(default)]
         exclude: Vec<String>,
-        concurrency: Option<usize>,
     },
     #[serde(alias = "fs")]
     FileSystem {
@@ -42,12 +41,23 @@ pub enum SourceConfig {
     },
 }
 
+impl SourceConfig {
+    pub fn id(&self) -> &str {
+        match self {
+            SourceConfig::Github { ref id, .. } => id.as_str(),
+            SourceConfig::FileSystem { ref id, .. } => id.as_str(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(tag = "from")]
 pub enum GithubRepositoriesConfig {
     #[serde(alias = "list")]
     FromList {
         server: Option<String>,
+        #[serde(default)]
+        transport: GitCloneTransport,
         list: Vec<GithubRepo>,
     },
 
@@ -87,12 +97,12 @@ impl Default for GitCloneTransport {
 #[serde(tag = "use")]
 pub enum SearchEngineConfig {
     #[serde(alias = "tantivy")]
-    Tantivy { path: Option<PathBuf> }
+    Tantivy { path: PathBuf }
 }
 
 impl Default for SearchEngineConfig {
     fn default() -> Self {
-        SearchEngineConfig::Tantivy { path: None }
+        SearchEngineConfig::Tantivy { path: PathBuf::from("/tmp/doks_index") }
     }
 }
 
@@ -102,10 +112,39 @@ impl TryInto<Box<dyn SearchEngine>> for &SearchEngineConfig {
     fn try_into(self) -> Result<Box<dyn SearchEngine>, Self::Error> {
         match self {
             SearchEngineConfig::Tantivy { path } => {
-                let default_path = PathBuf::from("/tmp/doks_index");
-                let path = path.as_ref().unwrap_or(&default_path);
-
                 Ok(Box::new(TantivySearchEngine::new(path)?))
+            }
+        }
+    }
+}
+
+impl TryInto<Box<dyn GitRepositoryLister>> for &GithubRepositoriesConfig {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<Box<dyn GitRepositoryLister>, Self::Error> {
+        match self {
+            GithubRepositoriesConfig::FromList { server, transport, list } => {
+                let server = server.as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or("github.com".to_string());
+
+                Ok(
+                    Box::new(GithubRepoStaticList {
+                        list: list
+                            .iter()
+                            .map(|repo| RepositoryInfo {
+                                name: repo.name.clone(),
+                                clone_url: match transport {
+                                    GitCloneTransport::Ssh => format!("git@{}:{}.git", server, repo.name),
+                                    GitCloneTransport::Https => format!("https://{}/{}.git", server, repo.name),
+                                },
+                            })
+                            .collect()
+                    })
+                )
+            }
+            GithubRepositoriesConfig::FromApi { .. } => {
+                bail!("Not yet supported");
             }
         }
     }
@@ -116,7 +155,24 @@ impl TryInto<Box<dyn DocumentSource>> for &SourceConfig {
 
     fn try_into(self) -> Result<Box<dyn DocumentSource>, Self::Error> {
         match self {
-            SourceConfig::Github { .. } => todo!("Github source not supported yet"),
+            SourceConfig::Github { id, repositories, include, exclude } => {
+                let lister: Box<dyn GitRepositoryLister> = repositories.try_into()?;
+
+                Ok(
+                    Box::new(
+                        GithubSource {
+                            source_id: id.to_string(),
+                            lister,
+                            include: include.iter()
+                                .map(|e| Regex::new(e.as_str()))
+                                .collect::<Result<_, _>>()?,
+                            exclude: exclude.iter()
+                                .map(|e| Regex::new(e.as_str()))
+                                .collect::<Result<_, _>>()?,
+                        }
+                    )
+                )
+            }
             SourceConfig::FileSystem { id, include, exclude, paths } => {
                 Ok(
                     Box::new(
@@ -135,14 +191,15 @@ impl TryInto<Box<dyn DocumentSource>> for &SourceConfig {
 
 #[cfg(test)]
 mod tests {
-    use crate::cli::config::{DoksConfig, GithubRepo};
-    use crate::cli::config::GitCloneTransport::Ssh;
+    use std::path::PathBuf;
+
+    use crate::cli::config::{DoksConfig, GitCloneTransport, GithubRepo};
     use crate::cli::config::GithubRepositoriesConfig::FromList;
     use crate::cli::config::SearchEngineConfig::Tantivy;
     use crate::cli::config::SourceConfig::Github;
 
     #[test]
-    fn test() -> anyhow::Result<()> {
+    fn test_config_parse() -> anyhow::Result<()> {
         let config = r#"
             {
               "sources": [{
@@ -157,7 +214,7 @@ mod tests {
                     ]
                   }
               }],
-              "engine": {"use": "tantivy"}
+              "engine": {"use": "tantivy", "path": "/tmp/doks_index" }
             }
         "#;
 
@@ -168,6 +225,7 @@ mod tests {
                     id: "github".to_string(),
                     repositories: FromList {
                         server: None,
+                        transport: GitCloneTransport::Ssh,
                         list: vec![
                             GithubRepo {
                                 name: "wlezzar/jtab".to_string(),
@@ -191,12 +249,10 @@ mod tests {
                                 exclude: Vec::default(),
                             }],
                     },
-                    transport: Ssh,
                     include: Vec::default(),
                     exclude: Vec::default(),
-                    concurrency: None,
                 }],
-            engine: Tantivy { path: None },
+            engine: Tantivy { path: PathBuf::from("/tmp/doks_index") },
         };
 
         assert_eq!(parsed, expected);

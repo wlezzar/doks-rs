@@ -41,15 +41,15 @@ pub async fn cli_main(opts: DoksOpts) -> anyhow::Result<()> {
     match &opts.cmd {
         DoksCommand::Index => {
             let search: Box<dyn SearchEngine> = (&config.engine).try_into()?;
-            for source in &config.sources {
-                let source: Box<dyn DocumentSource> = source.try_into()?;
+            for source_config in &config.sources {
+                let source: Box<dyn DocumentSource> = source_config.try_into()?;
                 let mut stream = source.fetch().batched(10);
 
                 while let Some(documents) = stream.next().await {
                     let collected = documents
                         .into_iter()
                         .collect::<anyhow::Result<Vec<_>>>()
-                        .context("Error occurred while fetching documents from source")?;
+                        .context(format!("Error occurred while fetching documents from source: {}", source_config.id()))?;
 
                     search.index(collected).await?;
                 }
@@ -66,7 +66,9 @@ pub async fn cli_main(opts: DoksOpts) -> anyhow::Result<()> {
                 println!("{}", json)
             }
         }
-        DoksCommand::Purge => {}
+        DoksCommand::Purge => {
+
+        }
     }
 
     Ok(())

@@ -28,7 +28,7 @@ impl DocumentSource for GithubSource {
         let mut repositories = self.lister.list();
         let source_id = self.source_id.clone();
         let include = self.include.clone();
-        let exclude = self.include.clone();
+        let exclude = self.exclude.clone();
 
         Box::pin(
             channel_stream(|tx| async move {

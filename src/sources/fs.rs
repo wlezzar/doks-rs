@@ -40,9 +40,11 @@ impl DocumentSource for FileSystemDocumentSource {
 
                     let matching = (&include)
                         .iter()
-                        .all(|r| r.is_match(path.as_ref()));
+                        .any(|r| {
+                            r.is_match(path.as_ref())
+                        });
 
-                    let matching = matching && (&exclude)
+                    let matching = matching && exclude.is_empty() && (&exclude)
                         .iter()
                         .all(|r| !r.is_match(path.as_ref()));
 
@@ -73,6 +75,7 @@ impl DocumentSource for FileSystemDocumentSource {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::anyhow;
     use regex::Regex;
     use tempdir::TempDir;
     use tokio_stream::StreamExt;
@@ -118,6 +121,15 @@ mod tests {
         collected.sort();
 
         assert_eq!(collected, files);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_regex() -> anyhow::Result<()> {
+        let regex = Regex::new(".*.txt")?;
+
+        dbg!(regex.is_match("/tmp/cloned.7YsePJJnM0WX/build.gradle.txt"));
 
         Ok(())
     }

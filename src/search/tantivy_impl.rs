@@ -4,14 +4,14 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use tantivy::{doc, Index, IndexReader, IndexWriter};
+use tantivy::{doc, Index, IndexReader, IndexWriter, SnippetGenerator};
 use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Document as TantivyDoc, Field, SchemaBuilder, STORED, STRING, TEXT};
 
 use crate::model::Document;
-use crate::search::SearchEngine;
+use crate::search::{FoundItem, SearchEngine, SearchResult};
 use crate::sources::DocStream;
 
 pub struct TantivySearchEngine {
@@ -94,7 +94,7 @@ impl SearchEngine for TantivySearchEngine {
         task.await?
     }
 
-    fn search(&self, query: &str) -> anyhow::Result<DocStream> {
+    fn search(&self, query: &str) -> SearchResult {
         let searcher = self.reader.searcher();
         let query_parser = QueryParser::for_index(
             &self.index,
@@ -113,14 +113,25 @@ impl SearchEngine for TantivySearchEngine {
             let fields = fields;
             let query = query;
 
+            let snippet_generator = SnippetGenerator::create(
+                &searcher,
+                &*query,
+                fields.content.clone(),
+            )?;
+
             let top_docs = searcher.search(
                 query.borrow(),
                 &TopDocs::with_limit(10),
             )?;
 
-            for (_, doc_address) in top_docs {
+            for (score, doc_address) in top_docs {
                 let doc = searcher.doc(doc_address)?;
-                let doc = tantivy_doc_to_doks(doc, &fields)?;
+                let doc = tantivy_doc_to_found_item(
+                    doc,
+                    score.abs(),
+                    &fields,
+                    &snippet_generator,
+                )?;
 
                 results_tx.blocking_send(Ok(doc))?;
             }
@@ -133,30 +144,35 @@ impl SearchEngine for TantivySearchEngine {
     }
 }
 
-fn tantivy_doc_to_doks(tantivy_doc: TantivyDoc, fields: &SchemaFields) -> anyhow::Result<Document> {
+fn tantivy_doc_to_found_item(
+    tantivy_doc: TantivyDoc,
+    score: f32,
+    fields: &SchemaFields,
+    snippet_generator: &SnippetGenerator,
+) -> anyhow::Result<FoundItem> {
+    let snippet = snippet_generator.snippet_from_doc(&tantivy_doc
+    );
+
     Ok(
-        Document {
-            title: tantivy_doc.get_first(fields.title)
-                .and_then(|f| f.text())
-                .expect("Field title of type text not found")
-                .to_string(),
+        FoundItem {
             id: tantivy_doc.get_first(fields.id)
                 .and_then(|f| f.text())
                 .expect("Field id of type text not found")
+                .to_string(),
+            title: tantivy_doc.get_first(fields.title)
+                .and_then(|f| f.text())
+                .expect("Field title of type text not found")
                 .to_string(),
             link: tantivy_doc.get_first(fields.link)
                 .and_then(|f| f.text())
                 .expect("Field link of type text not found")
                 .to_string(),
-            content: tantivy_doc.get_first(fields.content)
-                .and_then(|f| f.text())
-                .expect("Field content of type text not found")
-                .to_string(),
+            snippet: snippet.to_html(),
             source: tantivy_doc.get_first(fields.source)
                 .and_then(|f| f.text())
                 .expect("Field source of type text not found")
                 .to_string(),
-            metadata: HashMap::new(),
+            score,
         }
     )
 }
@@ -202,7 +218,8 @@ mod tests {
 
         let results = engine.search("computer")?.collect::<Result<Vec<_>, _>>().await?;
 
-        assert_eq!(results, vec![document2]);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap().id, document2.id);
 
         Ok(())
     }

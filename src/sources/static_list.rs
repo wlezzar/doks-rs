@@ -7,7 +7,7 @@ pub struct StaticDocumentSource {
 
 impl DocumentSource for StaticDocumentSource {
     fn fetch(&self) -> DocStream {
-        Box::pin(tokio_stream::iter(self.documents.clone().into_iter().map(|e| Ok(e))))
+        Box::pin(tokio_stream::iter(self.documents.clone().into_iter().map(Ok)))
     }
 }
 

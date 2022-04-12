@@ -50,13 +50,13 @@ impl TantivySearchEngine {
         let content = schema_builder.add_text_field("content", TEXT | STORED);
         let source = schema_builder.add_text_field("source", STRING | STORED);
 
-        let default_fields = vec![title.clone(), content.clone()];
+        let default_fields = vec![title, content];
         let fields = SchemaFields { title, id, link, content, source };
 
         let schema = schema_builder.build();
         let index = Index::open_or_create(
             MmapDirectory::open(path)?,
-            schema.clone(),
+            schema,
         )?;
 
 

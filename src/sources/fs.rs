@@ -39,11 +39,11 @@ impl DocumentSource for FileSystemDocumentSource {
                     log::debug!("Processing: {}", &path);
 
                     let matching = (&include)
-                        .into_iter()
+                        .iter()
                         .all(|r| r.is_match(path.as_ref()));
 
                     let matching = matching && (&exclude)
-                        .into_iter()
+                        .iter()
                         .all(|r| !r.is_match(path.as_ref()));
 
                     if !matching {

@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 pub fn get_path<'a>(json: &'a Value, path: &[&str]) -> anyhow::Result<&'a Value> {
-    let response = path.into_iter().fold::<Option<_>, _>(Some(json), |acc, node| {
+    let response = path.iter().fold::<Option<_>, _>(Some(json), |acc, node| {
         acc.and_then(|element| element.get(node))
     });
 

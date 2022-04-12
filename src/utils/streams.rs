@@ -13,7 +13,7 @@ pub fn channel_stream<R, Fut>(
     let (tx, rx) = tokio::sync::mpsc::channel::<anyhow::Result<R>>(1);
 
     let manager_tx = tx.clone();
-    let stream_tx = tx.clone();
+    let stream_tx = tx;
 
     let fut = action(stream_tx);
 
@@ -33,7 +33,7 @@ pub fn channel_stream<R, Fut>(
         }
 
         if let Some(err) = error {
-            if let Err(_) = manager_tx.send(Err(err)).await {
+            if manager_tx.send(Err(err)).await.is_err() {
                 log::error!("couldn't send error through channel (likely closed)");
             }
         }

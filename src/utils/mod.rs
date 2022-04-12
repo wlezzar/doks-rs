@@ -27,15 +27,17 @@ pub trait StreamUtils: Stream {
             while let Some(item) = stream.next().await {
                 batch.push(item);
 
-                if batch.len() >= size {
-                    if let Err(_) = tx.send(mem::take(&mut batch)).await {
-                        log::warn!("Sender closed!");
-                    };
+                if batch.len() < size {
+                    continue;
                 }
+
+                if tx.send(mem::take(&mut batch)).await.is_err() {
+                    log::warn!("Sender closed!");
+                };
             }
 
             if !batch.is_empty() {
-                if let Err(_) = tx.send(batch).await {
+                if tx.send(batch).await.is_err() {
                     log::warn!("Couldn't send batch downstream!");
                 };
             }

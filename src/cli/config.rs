@@ -126,7 +126,7 @@ impl TryInto<Box<dyn GitRepositoryLister>> for &GithubRepositoriesConfig {
             GithubRepositoriesConfig::FromList { server, transport, list } => {
                 let server = server.as_ref()
                     .map(|s| s.to_string())
-                    .unwrap_or("github.com".to_string());
+                    .unwrap_or_else(|| "github.com".to_string());
 
                 Ok(
                     Box::new(GithubRepoStaticList {
